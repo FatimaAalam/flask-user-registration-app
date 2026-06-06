@@ -1,10 +1,38 @@
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 from werkzeug.security import generate_password_hash
+from flask_mysqldb import MySQL
 from datetime import datetime
 import re
+import os
 
 app = Flask(__name__)
 app.secret_key = "dev-secret-key-change-in-prod"
+
+# --- MySQL config from environment variables ---
+app.config['MYSQL_HOST']     = os.environ.get('DB_HOST', 'localhost')
+app.config['MYSQL_USER']     = os.environ.get('DB_USER', 'flaskuser')
+app.config['MYSQL_PASSWORD'] = os.environ.get('DB_PASSWORD', 'flaskpass')
+app.config['MYSQL_DB']       = os.environ.get('DB_NAME', 'flaskdb')
+
+mysql = MySQL(app)
+
+# --- Create table if it doesn't exist ---
+def init_db():
+    cur = mysql.connection.cursor()
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id            INT AUTO_INCREMENT PRIMARY KEY,
+            full_name     VARCHAR(100),
+            username      VARCHAR(50) UNIQUE,
+            email         VARCHAR(100) UNIQUE,
+            phone         VARCHAR(20),
+            dob           DATE,
+            password_hash VARCHAR(256),
+            joined        DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    mysql.connection.commit()
+    cur.close()
 
 
 def validate_registration(data):
@@ -72,18 +100,39 @@ def register():
             return render_template("register.html", form_data=form_data)
 
         dob_obj = datetime.strptime(form_data["dob"], "%Y-%m-%d")
-        age = (datetime.today() - dob_obj).days // 365
+        age     = (datetime.today() - dob_obj).days // 365
+        pw_hash = generate_password_hash(form_data["password"])
+
+        # --- Save to MySQL ---
+        try:
+            init_db()
+            cur = mysql.connection.cursor()
+            cur.execute('''
+                INSERT INTO users (full_name, username, email, phone, dob, password_hash)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            ''', (
+                form_data["full_name"],
+                form_data["username"],
+                form_data["email"],
+                form_data["phone"],
+                form_data["dob"],
+                pw_hash
+            ))
+            mysql.connection.commit()
+            cur.close()
+        except Exception as e:
+            flash(f"Database error: {str(e)}", "error")
+            return render_template("register.html", form_data=form_data)
 
         session["user"] = {
-            "full_name":     form_data["full_name"],
-            "username":      form_data["username"],
-            "email":         form_data["email"],
-            "phone":         form_data["phone"],
-            "dob":           dob_obj.strftime("%B %d, %Y"),
-            "age":           age,
-            "password_hash": generate_password_hash(form_data["password"]),
-            "joined":        datetime.now().strftime("%B %d, %Y"),
-            "initials":      "".join(p[0].upper() for p in form_data["full_name"].split()[:2]),
+            "full_name": form_data["full_name"],
+            "username":  form_data["username"],
+            "email":     form_data["email"],
+            "phone":     form_data["phone"],
+            "dob":       dob_obj.strftime("%B %d, %Y"),
+            "age":       age,
+            "joined":    datetime.now().strftime("%B %d, %Y"),
+            "initials":  "".join(p[0].upper() for p in form_data["full_name"].split()[:2]),
         }
 
         return redirect(url_for("profile"))
