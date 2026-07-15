@@ -138,7 +138,9 @@ def register():
         return redirect(url_for("profile"))
 
     return render_template("register.html", form_data={})
-
+@app.route("/health")
+def health():
+    return {"status": "ok"}, 200
 
 @app.route("/profile")
 def profile():
